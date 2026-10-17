@@ -2,18 +2,16 @@ package net.wastu.customtiles;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.provider.Settings;
 import android.util.Log;
-
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
 
 public class DisplayHardware {
     private static final String TAG = "DisplayHardware";
     public static final String PREFS_NAME = "customtiles_prefs";
     public static final String KEY_LIGHT_COLOR_LEVEL = "light_color_level";
     public static final String KEY_PREV_BRIGHTNESS = "prev_brightness";
+    public static final String KEY_PREV_BACKLIGHT = "prev_backlight";
     public static final String KEY_PREV_AUTO = "prev_auto";
     public static final String KEY_HBM_ACTIVE = "hbm_active";
     public static final String KEY_LIGHT_COLOR_ACTIVE = "light_color_active";
@@ -29,76 +27,68 @@ public class DisplayHardware {
         SYSTEM_FALLBACK
     }
 
-    private static final String[] XIAOMI_NODES = {
-        "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/disp_param",
-        "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-1/disp_param"
-    };
+    private static final String XIAOMI_NODE = "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/disp_param";
+    private static final String XIAOMI_BACKLIGHT_NODE = "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/backlight";
+    private static final String XIAOMI_MAX_NODE = "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/factory_max_brightness";
 
-    private static final String[] QUALCOMM_DRM_NODES = {
-        "/sys/class/drm/card0-DSI-1/hbm",
-        "/sys/devices/platform/soc/soc:qcom,dsi-display-primary/hbm"
-    };
+    private static HbmType sDetectedType = null;
+    private static String sDetectedNode = null;
 
-    private static final String[] QUALCOMM_FB0_NODES = {
-        "/sys/class/graphics/fb0/hbm"
-    };
-
-    private static final String[] PIXEL_NODES = {
-        "/sys/class/backlight/panel0-backlight/hbm_mode"
-    };
-
-    private static final String[] OPPO_NODES = {
-        "/sys/kernel/oppo_display/hbm"
-    };
-
-    public static HbmType detectHbmType() {
-        for (String node : XIAOMI_NODES) {
-            if (new File(node).exists()) return HbmType.XIAOMI_DISP_PARAM;
-        }
-        for (String node : QUALCOMM_DRM_NODES) {
-            if (new File(node).exists()) return HbmType.QUALCOMM_DRM;
-        }
-        for (String node : QUALCOMM_FB0_NODES) {
-            if (new File(node).exists()) return HbmType.QUALCOMM_FB0;
-        }
-        for (String node : PIXEL_NODES) {
-            if (new File(node).exists()) return HbmType.GOOGLE_PIXEL;
-        }
-        for (String node : OPPO_NODES) {
-            if (new File(node).exists()) return HbmType.OPPO_ONEPLUS;
-        }
-        return HbmType.SYSTEM_FALLBACK;
+    public static boolean isXiaomiDevice() {
+        String m = Build.MANUFACTURER != null ? Build.MANUFACTURER.toLowerCase() : "";
+        String b = Build.BRAND != null ? Build.BRAND.toLowerCase() : "";
+        return m.contains("xiaomi") || b.contains("redmi") || b.contains("poco") || b.contains("xiaomi");
     }
 
-    public static String getDetectedNodePath() {
-        HbmType type = detectHbmType();
-        switch (type) {
-            case XIAOMI_DISP_PARAM:
-                for (String node : XIAOMI_NODES) if (new File(node).exists()) return node;
-                break;
-            case QUALCOMM_DRM:
-                for (String node : QUALCOMM_DRM_NODES) if (new File(node).exists()) return node;
-                break;
-            case QUALCOMM_FB0:
-                for (String node : QUALCOMM_FB0_NODES) if (new File(node).exists()) return node;
-                break;
-            case GOOGLE_PIXEL:
-                for (String node : PIXEL_NODES) if (new File(node).exists()) return node;
-                break;
-            case OPPO_ONEPLUS:
-                for (String node : OPPO_NODES) if (new File(node).exists()) return node;
-                break;
-            default:
-                break;
+    public static HbmType detectHbmType() {
+        if (sDetectedType != null) {
+            return sDetectedType;
         }
-        return null;
+
+        if (isXiaomiDevice()) {
+            sDetectedType = HbmType.XIAOMI_DISP_PARAM;
+            sDetectedNode = XIAOMI_NODE;
+            return sDetectedType;
+        }
+
+        // Test sysfs nodes via root shell to bypass untrusted_app SELinux restrictions
+        String res = RootShell.exec(
+            "if [ -e " + XIAOMI_NODE + " ]; then echo 'xiaomi';" +
+            "elif [ -e /sys/class/drm/card0-DSI-1/hbm ]; then echo 'qcom_drm';" +
+            "elif [ -e /sys/class/graphics/fb0/hbm ]; then echo 'qcom_fb0';" +
+            "elif [ -e /sys/class/backlight/panel0-backlight/hbm_mode ]; then echo 'pixel';" +
+            "elif [ -e /sys/kernel/oppo_display/hbm ]; then echo 'oplus';" +
+            "else echo 'fallback'; fi"
+        );
+
+        if (res.contains("xiaomi")) {
+            sDetectedType = HbmType.XIAOMI_DISP_PARAM;
+            sDetectedNode = XIAOMI_NODE;
+        } else if (res.contains("qcom_drm")) {
+            sDetectedType = HbmType.QUALCOMM_DRM;
+            sDetectedNode = "/sys/class/drm/card0-DSI-1/hbm";
+        } else if (res.contains("qcom_fb0")) {
+            sDetectedType = HbmType.QUALCOMM_FB0;
+            sDetectedNode = "/sys/class/graphics/fb0/hbm";
+        } else if (res.contains("pixel")) {
+            sDetectedType = HbmType.GOOGLE_PIXEL;
+            sDetectedNode = "/sys/class/backlight/panel0-backlight/hbm_mode";
+        } else if (res.contains("oplus")) {
+            sDetectedType = HbmType.OPPO_ONEPLUS;
+            sDetectedNode = "/sys/kernel/oppo_display/hbm";
+        } else {
+            sDetectedType = HbmType.SYSTEM_FALLBACK;
+            sDetectedNode = null;
+        }
+
+        return sDetectedType;
     }
 
     public static String getHardwareDescription() {
         HbmType type = detectHbmType();
         switch (type) {
             case XIAOMI_DISP_PARAM:
-                return "Xiaomi Display Feature (disp_param)";
+                return "Xiaomi Display Feature (disp_param & 10926 peak)";
             case QUALCOMM_DRM:
                 return "Qualcomm DRM Driver (card0-DSI)";
             case QUALCOMM_FB0:
@@ -115,30 +105,6 @@ public class DisplayHardware {
     // --- HBM Methods ---
 
     public static boolean isHbmActive(Context context) {
-        HbmType type = detectHbmType();
-        String node = getDetectedNodePath();
-
-        if (type == HbmType.XIAOMI_DISP_PARAM && node != null) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(node))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.contains("hbm[01]:")) {
-                        String[] parts = line.split(":");
-                        if (parts.length > 1) {
-                            return "1".equals(parts[1].trim());
-                        }
-                    }
-                }
-            } catch (Throwable ignored) {}
-        } else if (node != null) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(node))) {
-                String line = reader.readLine();
-                if (line != null) {
-                    return "1".equals(line.trim());
-                }
-            } catch (Throwable ignored) {}
-        }
-
         SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         return sp.getBoolean(KEY_HBM_ACTIVE, false);
     }
@@ -146,44 +112,64 @@ public class DisplayHardware {
     public static void setHbmEnabled(Context context, boolean enable) {
         SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         HbmType type = detectHbmType();
-        String node = getDetectedNodePath();
 
         if (enable) {
             // Save current brightness and auto brightness state
             try {
                 int curBright = Settings.System.getInt(context.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 200);
                 int curAuto = Settings.System.getInt(context.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS_MODE, 0);
-                sp.edit().putInt(KEY_PREV_BRIGHTNESS, curBright).putInt(KEY_PREV_AUTO, curAuto).putBoolean(KEY_HBM_ACTIVE, true).apply();
+                sp.edit().putInt(KEY_PREV_BRIGHTNESS, curBright).putInt(KEY_PREV_AUTO, curAuto).apply();
             } catch (Throwable ignored) {}
 
-            StringBuilder sb = new StringBuilder();
-            sb.append("settings put system screen_brightness_mode 0; ");
-            sb.append("settings put system screen_brightness 4095; ");
+            if (type == HbmType.XIAOMI_DISP_PARAM) {
+                // Save current physical backlight before boosting
+                String curBlStr = RootShell.exec("cat " + XIAOMI_BACKLIGHT_NODE + " 2>/dev/null");
+                int curBl = 4000;
+                try {
+                    curBl = Integer.parseInt(curBlStr.trim());
+                } catch (Throwable ignored) {}
+                sp.edit().putInt(KEY_PREV_BACKLIGHT, curBl).putBoolean(KEY_HBM_ACTIVE, true).apply();
 
-            if (type == HbmType.XIAOMI_DISP_PARAM && node != null) {
-                sb.append("echo '01 1' > ").append(node).append("; ");
-                sb.append("echo '23 4095' > ").append(node).append(" 2>/dev/null; ");
-                sb.append("echo '24 4095' > ").append(node).append(" 2>/dev/null; ");
-            } else if (node != null) {
-                sb.append("echo 1 > ").append(node).append("; ");
+                StringBuilder sb = new StringBuilder();
+                sb.append("echo '01 1' > ").append(XIAOMI_NODE).append("; ");
+                sb.append("MAX=$(cat ").append(XIAOMI_MAX_NODE).append(" 2>/dev/null || echo 10926); ");
+                sb.append("echo $MAX > ").append(XIAOMI_BACKLIGHT_NODE).append("; ");
+                sb.append("settings put system screen_brightness_mode 0; ");
+                sb.append("settings put system screen_brightness 4095; ");
+                RootShell.exec(sb.toString());
+            } else if (sDetectedNode != null) {
+                sp.edit().putBoolean(KEY_HBM_ACTIVE, true).apply();
+                StringBuilder sb = new StringBuilder();
+                sb.append("echo 1 > ").append(sDetectedNode).append("; ");
+                sb.append("settings put system screen_brightness_mode 0; ");
+                sb.append("settings put system screen_brightness 4095; ");
+                RootShell.exec(sb.toString());
+            } else {
+                sp.edit().putBoolean(KEY_HBM_ACTIVE, true).apply();
+                RootShell.exec("settings put system screen_brightness_mode 0; settings put system screen_brightness 4095;");
             }
-
-            RootShell.exec(sb.toString());
         } else {
             int prevBright = sp.getInt(KEY_PREV_BRIGHTNESS, 200);
             int prevAuto = sp.getInt(KEY_PREV_AUTO, 0);
+            int prevBl = sp.getInt(KEY_PREV_BACKLIGHT, 4000);
             sp.edit().putBoolean(KEY_HBM_ACTIVE, false).apply();
 
-            StringBuilder sb = new StringBuilder();
-            if (type == HbmType.XIAOMI_DISP_PARAM && node != null) {
-                sb.append("echo '01 0' > ").append(node).append("; ");
-            } else if (node != null) {
-                sb.append("echo 0 > ").append(node).append("; ");
+            if (type == HbmType.XIAOMI_DISP_PARAM) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("echo '01 0' > ").append(XIAOMI_NODE).append("; ");
+                sb.append("echo ").append(prevBl).append(" > ").append(XIAOMI_BACKLIGHT_NODE).append(" 2>/dev/null; ");
+                sb.append("settings put system screen_brightness ").append(prevBright).append("; ");
+                sb.append("settings put system screen_brightness_mode ").append(prevAuto).append("; ");
+                RootShell.exec(sb.toString());
+            } else if (sDetectedNode != null) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("echo 0 > ").append(sDetectedNode).append("; ");
+                sb.append("settings put system screen_brightness ").append(prevBright).append("; ");
+                sb.append("settings put system screen_brightness_mode ").append(prevAuto).append("; ");
+                RootShell.exec(sb.toString());
+            } else {
+                RootShell.exec("settings put system screen_brightness " + prevBright + "; settings put system screen_brightness_mode " + prevAuto + ";");
             }
-            sb.append("settings put system screen_brightness ").append(prevBright).append("; ");
-            sb.append("settings put system screen_brightness_mode ").append(prevAuto).append("; ");
-
-            RootShell.exec(sb.toString());
         }
     }
 
@@ -203,7 +189,7 @@ public class DisplayHardware {
         SharedPreferences sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         sp.edit().putInt(KEY_LIGHT_COLOR_LEVEL, percent).apply();
         if (isLightColorActive(context)) {
-            applyDisplaySaturation(percent);
+            applyDisplaySaturation(context, percent, true);
         }
     }
 
@@ -213,17 +199,34 @@ public class DisplayHardware {
 
         if (enable) {
             int targetLevel = getTargetLightColorLevel(context);
-            applyDisplaySaturation(targetLevel);
+            applyDisplaySaturation(context, targetLevel, true);
         } else {
-            applyDisplaySaturation(100);
+            applyDisplaySaturation(context, 100, false);
         }
     }
 
-    private static void applyDisplaySaturation(int levelPercent) {
-        // Universal Android SurfaceFlinger/ColorDisplayService call:
-        // IColorDisplayManager TRANSACTION_setSaturationLevel = 24
-        String cmd = "service call color_display 24 i32 " + levelPercent;
-        RootShell.exec(cmd);
-        Log.i(TAG, "Applied display saturation: " + levelPercent + "% via " + cmd);
+    private static void applyDisplaySaturation(Context context, int levelPercent, boolean enable) {
+        if (isXiaomiDevice()) {
+            // Xiaomi HyperOS / MIUI Paper Mode (Light Color with 0% yellow warmth)
+            StringBuilder sb = new StringBuilder();
+            if (enable) {
+                sb.append("settings put system screen_mode_type 2; ");
+                sb.append("settings put system screen_paper_texture_level 0; ");
+                sb.append("settings put system screen_texture_color_type 2; ");
+                sb.append("settings put system screen_texture_eyecare_level 0; ");
+                sb.append("settings put system screen_paper_mode_enabled 1; ");
+                sb.append("am broadcast -a com.miui.securitycore.action.EYEPROTECTION_MODE_CHANGE --user 0; ");
+            } else {
+                sb.append("settings put system screen_paper_mode_enabled 0; ");
+                sb.append("am broadcast -a com.miui.securitycore.action.EYEPROTECTION_MODE_CHANGE --user 0; ");
+            }
+            RootShell.exec(sb.toString());
+            Log.i(TAG, "Applied Xiaomi Light Color mode: enable=" + enable);
+        } else {
+            // AOSP / Pixel / Generic SurfaceFlinger call
+            String cmd = "service call color_display 24 i32 " + levelPercent;
+            RootShell.exec(cmd);
+            Log.i(TAG, "Applied AOSP display saturation: " + levelPercent + "% via " + cmd);
+        }
     }
 }
