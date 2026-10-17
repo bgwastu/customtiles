@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Custom Tiles</string>
+    <string name="tile_camera_label">Camera</string>
+    <string name="tile_hbm_label">Max Brightness</string>
+    <string name="tile_light_color_label">Light Colors</string>
+    <string name="tile_state_on_peak">ON (Peak)</string>
+    <string name="tile_state_off">OFF</string>
+</resources>
