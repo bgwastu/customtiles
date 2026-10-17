@@ -135,24 +135,27 @@ public class DisplayHardware {
                 sb.append("MAX=$(cat ").append(XIAOMI_MAX_NODE).append(" 2>/dev/null || echo 10926); ");
                 sb.append("echo $MAX > ").append(XIAOMI_BACKLIGHT_NODE).append("; ");
                 sb.append("settings put system screen_brightness_mode 0; ");
-                sb.append("settings put system screen_brightness 4095; ");
+                sb.append("settings put system screen_brightness 255; ");
+                sb.append("cmd display set-brightness 1.0; ");
                 RootShell.exec(sb.toString());
             } else if (sDetectedNode != null) {
                 sp.edit().putBoolean(KEY_HBM_ACTIVE, true).apply();
                 StringBuilder sb = new StringBuilder();
                 sb.append("echo 1 > ").append(sDetectedNode).append("; ");
                 sb.append("settings put system screen_brightness_mode 0; ");
-                sb.append("settings put system screen_brightness 4095; ");
+                sb.append("settings put system screen_brightness 255; ");
+                sb.append("cmd display set-brightness 1.0; ");
                 RootShell.exec(sb.toString());
             } else {
                 sp.edit().putBoolean(KEY_HBM_ACTIVE, true).apply();
-                RootShell.exec("settings put system screen_brightness_mode 0; settings put system screen_brightness 4095;");
+                RootShell.exec("settings put system screen_brightness_mode 0; settings put system screen_brightness 255; cmd display set-brightness 1.0;");
             }
         } else {
-            int prevBright = sp.getInt(KEY_PREV_BRIGHTNESS, 200);
+            int prevBright = sp.getInt(KEY_PREV_BRIGHTNESS, 128);
             int prevAuto = sp.getInt(KEY_PREV_AUTO, 0);
             int prevBl = sp.getInt(KEY_PREV_BACKLIGHT, 4000);
             sp.edit().putBoolean(KEY_HBM_ACTIVE, false).apply();
+            float prevRatio = Math.max(0.01f, Math.min(1.0f, prevBright > 255 ? prevBright / 4095.0f : prevBright / 255.0f));
 
             if (type == HbmType.XIAOMI_DISP_PARAM) {
                 StringBuilder sb = new StringBuilder();
@@ -160,15 +163,17 @@ public class DisplayHardware {
                 sb.append("echo ").append(prevBl).append(" > ").append(XIAOMI_BACKLIGHT_NODE).append(" 2>/dev/null; ");
                 sb.append("settings put system screen_brightness ").append(prevBright).append("; ");
                 sb.append("settings put system screen_brightness_mode ").append(prevAuto).append("; ");
+                sb.append("cmd display set-brightness ").append(prevRatio).append("; ");
                 RootShell.exec(sb.toString());
             } else if (sDetectedNode != null) {
                 StringBuilder sb = new StringBuilder();
                 sb.append("echo 0 > ").append(sDetectedNode).append("; ");
                 sb.append("settings put system screen_brightness ").append(prevBright).append("; ");
                 sb.append("settings put system screen_brightness_mode ").append(prevAuto).append("; ");
+                sb.append("cmd display set-brightness ").append(prevRatio).append("; ");
                 RootShell.exec(sb.toString());
             } else {
-                RootShell.exec("settings put system screen_brightness " + prevBright + "; settings put system screen_brightness_mode " + prevAuto + ";");
+                RootShell.exec("settings put system screen_brightness " + prevBright + "; settings put system screen_brightness_mode " + prevAuto + "; cmd display set-brightness " + prevRatio + ";");
             }
         }
     }
@@ -209,10 +214,11 @@ public class DisplayHardware {
         if (isXiaomiDevice()) {
             // Xiaomi HyperOS / MIUI Paper Mode (Light Color with 0% yellow warmth)
             StringBuilder sb = new StringBuilder();
-            if (enable) {
+            int colorType = (levelPercent == 0) ? 2 : 1; // 1: Light Color (淡彩), 2: Black & White (黑白)
+            if (enable && levelPercent < 100) {
                 sb.append("settings put system screen_mode_type 2; ");
                 sb.append("settings put system screen_paper_texture_level 0; ");
-                sb.append("settings put system screen_texture_color_type 2; ");
+                sb.append("settings put system screen_texture_color_type ").append(colorType).append("; ");
                 sb.append("settings put system screen_texture_eyecare_level 0; ");
                 sb.append("settings put system screen_paper_mode_enabled 1; ");
                 sb.append("am broadcast -a com.miui.securitycore.action.EYEPROTECTION_MODE_CHANGE --user 0; ");
@@ -221,7 +227,7 @@ public class DisplayHardware {
                 sb.append("am broadcast -a com.miui.securitycore.action.EYEPROTECTION_MODE_CHANGE --user 0; ");
             }
             RootShell.exec(sb.toString());
-            Log.i(TAG, "Applied Xiaomi Light Color mode: enable=" + enable);
+            Log.i(TAG, "Applied Xiaomi Light Color mode: enable=" + enable + " colorType=" + colorType);
         } else {
             // AOSP / Pixel / Generic SurfaceFlinger call
             String cmd = "service call color_display 24 i32 " + levelPercent;
